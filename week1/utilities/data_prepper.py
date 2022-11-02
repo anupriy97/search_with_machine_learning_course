@@ -245,18 +245,20 @@ class DataPrepper:
         feature_results["doc_id"] = []  # capture the doc id so we can join later
         feature_results["query_id"] = []  # ^^^
         feature_results["sku"] = []
-        feature_results["name_match"] = []
         
         for resp in response["hits"]["hits"]:
             feature_results["doc_id"].append(resp["_id"])  # capture the doc id so we can join later
             feature_results["query_id"].append(query_id)
             feature_results["sku"].append(resp["_id"])
-            try:
-                name_match_score = resp["fields"]["_ltrlog"][0]["log_entry"][0]["value"]
-            except:
-                name_match_score = 0.0
             
-            feature_results["name_match"].append(name_match_score)
+            for resp_feat in resp["fields"]["_ltrlog"][0]["log_entry"]:
+                if resp_feat["name"] not in feature_results.keys():
+                    feature_results[resp_feat["name"]] = []
+
+                if "value" in resp_feat.keys():
+                    feature_results[resp_feat["name"]].append(resp_feat["value"])
+                else:
+                    feature_results[resp_feat["name"]].append(0.0)
         
         frame = pd.DataFrame(feature_results)
         return frame.astype({'doc_id': 'int64', 'query_id': 'int64', 'sku': 'int64'})
