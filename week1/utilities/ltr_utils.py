@@ -11,25 +11,27 @@ def create_rescore_ltr_query(user_query: str, query_obj, click_prior_query: str,
     #add on the rescore
     ##### Step 4.e:
     # print("IMPLEMENT ME: create_rescore_ltr_query")
-    if active_features is not None and len(active_features) > 0:
-        query_obj["rescore"] = {
-            "window_size": rescore_size,
-            "query": {
-                "rescore_query": {
-                    "sltr": {
-                        "params": {
-                            "keywords": user_query
-                        },
-                        "model": ltr_model_name,
-                        # Since we are using a named store, as opposed to simply '_ltr', we need to pass it in
-                        "store": ltr_store_name,
-                        "active_features": active_features
-                    }
-                },
-                "query_weight": main_query_weight,
-                "rescore_query_weight": rescore_query_weight # Magic number, but let's say LTR matches are 2x baseline matches
-            }
+    query_obj["rescore"] = {
+        "window_size": rescore_size,
+        "query": {
+            "rescore_query": {
+                "sltr": {
+                    "params": {
+                        "keywords": user_query
+                    },
+                    "model": ltr_model_name,
+                    # Since we are using a named store, as opposed to simply '_ltr', we need to pass it in
+                    "store": ltr_store_name
+                }
+            },
+            "score_mode": "total",
+            "query_weight": main_query_weight,
+            "rescore_query_weight": rescore_query_weight # Magic number, but let's say LTR matches are 2x baseline matches
         }
+    }
+
+    if active_features is not None and len(active_features) > 0:
+        query_obj["rescore"]["query"]["rescore_query"]["sltr"]["active_features"] = active_features
 
     return query_obj
 
@@ -77,9 +79,9 @@ def create_feature_log_query(query, doc_ids, click_prior_query, featureset_name,
     # print("IMPLEMENT ME: create_feature_log_query")
     # Create our SLTR query, filtering so we only retrieve the doc id in question
     feature_log_query = {
-        'size': size,
-        'query': {
-            'bool': {
+        "size": size,
+        "query": {
+            "bool": {
                 "filter": [  # use a filter so that we don't actually score anything
                     {
                         "terms": {
