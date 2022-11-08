@@ -5,6 +5,7 @@ from tqdm import tqdm
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import pandas as pd
 
 def transform_name(product_name):
     # IMPLEMENT
@@ -63,7 +64,19 @@ if __name__ == '__main__':
     print("Writing results to %s" % output_file)
     with multiprocessing.Pool() as p:
         all_labels = tqdm(p.imap(_label_filename, files), total=len(files))
+
+        all_labels_concat = []
+        
+        for label_list in all_labels:
+            for (cat, name) in label_list:
+                all_labels_concat.append((cat, name))
+        
+        # all_labels_concat = [label_pair for label_pair_list in all_labels for label_pair in label_pair_list]
+        all_labels_df = pd.DataFrame(columns=['label', 'name'], data=all_labels_concat)
+        all_labels_df_gp = all_labels_df.groupby(['label']).agg({'name': 'count'}).reset_index()
+        min_products_labels = all_labels_df_gp[all_labels_df_gp['name'] >= min_products]['label'].values.tolist()
+
         with open(output_file, 'w') as output:
-            for label_list in all_labels:
-                for (cat, name) in label_list:
+            for (cat, name) in all_labels_concat:
+                if cat in min_products_labels:
                     output.write(f'__label__{cat} {name}\n')
