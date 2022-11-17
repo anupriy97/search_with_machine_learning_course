@@ -11,6 +11,12 @@ from urllib.parse import urljoin
 import pandas as pd
 import fileinput
 import logging
+import re
+import fasttext
+
+# Useful if you want to perform stemming.
+import nltk
+stemmer = nltk.stem.PorterStemmer()
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +55,7 @@ def create_prior_queries(doc_ids, doc_id_weights,
 
 
 # Hardcoded query here.  Better to use search templates or other query config.
-def create_query(user_query, click_prior_query, filters, sort="_score", sortDir="desc", size=10, source=None, synonyms=False):
+def create_query(user_query, click_prior_query, filters, boosts=None, sort="_score", sortDir="desc", size=10, source=None, synonyms=False):
     if synonyms:
         nameField = "name.synonyms"
     else:
@@ -172,6 +178,10 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
             }
         }
     }
+    
+    if boosts is not None:
+        query_obj['query']["function_score"]["query"]["bool"]["should"].extend(boosts)
+    
     if click_prior_query is not None and click_prior_query != "":
         query_obj["query"]["function_score"]["query"]["bool"]["should"].append({
             "query_string": {
@@ -191,11 +201,73 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
     return query_obj
 
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False):
+def normalize_query(query):
+    query_l = query.lower()
+    query_s = re.sub(r'[^a-zA-Z0-9]+', ' ', query_l)
+    query_norm = ' '.join([stemmer.stem(token) for token in query_s.split(' ')])
+    return query_norm
+
+
+def classify_query(query, model, k=10, threshold=0.5):
+    # Normalize the query
+    query_norm = normalize_query(query)
+    
+    # Predict the category of the normalized query
+    prediction = model.predict(query_norm, k=k)
+    
+    # Retuning just the Top category if score is above 0.5 or combination of top categories till sum of scores get above 0.5
+    query_cats = []
+    cum_sum = 0
+
+    for i in range(k):
+        cum_sum += prediction[1][i]
+
+        curr_query_cat = prediction[0][i].replace('__label__', '')
+
+        if cum_sum >= threshold:
+            query_cats.append(curr_query_cat)
+            break
+        
+        query_cats.append(curr_query_cat)
+
+    if cum_sum >= threshold:
+        print(query_cats, cum_sum)
+        return query_cats
+    
+    return None
+
+
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", synonyms=False, model=None,
+           query_category_filter=True, query_category_boost=0):
     #### W3: classify the query
     #### W3: create filters and boosts
     # Note: you may also want to modify the `create_query` method above
-    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"], synonyms=synonyms)
+    filters = None
+    boosts = None
+    
+    if model is not None:
+        query_cats = classify_query(user_query, model)
+        logging.info(query_cats)
+
+        if query_category_filter:
+            filters = []
+            filters.append({
+                "terms": {
+                    "categoryPathIds": query_cats
+                }
+            })
+
+        if query_category_boost != 0:
+            boosts = []
+            boosts.append({
+                "terms": {
+                    "categoryPathIds": query_cats,
+                    "boost": query_category_boost
+                }
+            })
+
+    query_obj = create_query(user_query, click_prior_query=None, filters=filters, boosts=boosts, sort=sort,
+                             sortDir=sortDir, source=["name", "shortDescription"], synonyms=synonyms)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -221,6 +293,9 @@ if __name__ == "__main__":
     general.add_argument("-q", '--query', default="nespresso",
                          help='Query to search using Opensearch')
     general.add_argument('--synonyms', action='store_true', help='Use this flag to do query using synonyms')
+    general.add_argument('--model', default='/workspace/datasets/fasttext/query_classifier_lr_0.5_epoch_25_ngrams_2.bin', help='Location of the model file to classify query into category')
+    general.add_argument('--query_category_filter', action='store_true', help='Use this flag to filter results using query category predicted by Query Classifier model')
+    general.add_argument('--query_category_boost', type=int, default=0, help='Use this argument to boost results with query category predicted by Query Classifier model (Default is 0 i.e. no boosting)')
 
     args = parser.parse_args()
 
@@ -250,9 +325,12 @@ if __name__ == "__main__":
     index_name = args.index
     synonyms = args.synonyms
     query = args.query
+    model_file = args.model
+    query_category_filter = args.query_category_filter
+    query_category_boost = args.query_category_boost
 
-    query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
-    print(query_prompt)
+    # query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
+    # print(query_prompt)
     # for line in fileinput.input():
     #     query = line.rstrip()
     #     if query == "Exit":
@@ -261,6 +339,10 @@ if __name__ == "__main__":
 
     #     print(query_prompt)
 
-    search(client=opensearch, user_query=query, index=index_name, synonyms=synonyms)
+    # Load Query Classifier model using fasttext
+    query_classifier_model = fasttext.load_model(model_file)
+
+    search(client=opensearch, user_query=query, index=index_name, synonyms=synonyms, model=query_classifier_model,
+           query_category_filter=query_category_filter, query_category_boost=query_category_boost)
 
     
