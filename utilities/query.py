@@ -18,6 +18,10 @@ import fasttext
 import nltk
 stemmer = nltk.stem.PorterStemmer()
 
+# Import SentenceTransformer library and instantiate the model
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -275,6 +279,33 @@ def search(client, user_query, index="bbuy_products", sort="_score", sortDir="de
         print(json.dumps(response, indent=2))
 
 
+def create_vector_query(user_query, size=10):
+    embeddings = model.encode([user_query])
+
+    query_obj = {
+        'size': size,
+        "query": {
+            "knn": {
+                "name_embedding": {
+                    "vector": embeddings[0],
+                    "k": size
+                }
+            }
+        }
+    }
+
+    return query_obj
+
+
+def vector_search(client, user_query, index="bbuy_products"):
+    query_obj = create_vector_query(user_query)
+    logging.info(query_obj)
+    response = client.search(query_obj, index=index)
+    if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
+        hits = response['hits']['hits']
+        print(json.dumps(response, indent=2))
+
+
 if __name__ == "__main__":
     host = 'localhost'
     port = 9200
@@ -292,6 +323,7 @@ if __name__ == "__main__":
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
     general.add_argument("-q", '--query', default="nespresso",
                          help='Query to search using Opensearch')
+    general.add_argument('--vector', action='store_true', help='Use this flag to do query using semantic vector search')
     general.add_argument('--synonyms', action='store_true', help='Use this flag to do query using synonyms')
     general.add_argument('--model', default='/workspace/datasets/fasttext/query_classifier_lr_0.5_epoch_25_ngrams_2.bin', help='Location of the model file to classify query into category')
     general.add_argument('--query_category_filter', action='store_true', help='Use this flag to filter results using query category predicted by Query Classifier model')
@@ -323,26 +355,31 @@ if __name__ == "__main__":
 
     )
     index_name = args.index
-    synonyms = args.synonyms
     query = args.query
-    model_file = args.model
-    query_category_filter = args.query_category_filter
-    query_category_boost = args.query_category_boost
+    vector_search_flag = args.vector
 
-    # query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
-    # print(query_prompt)
-    # for line in fileinput.input():
-    #     query = line.rstrip()
-    #     if query == "Exit":
-    #         break
-    #     search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms)
+    if vector_search_flag:
+        vector_search(client=opensearch, user_query=query, index=index_name)
+    else:
+        synonyms = args.synonyms
+        model_file = args.model
+        query_category_filter = args.query_category_filter
+        query_category_boost = args.query_category_boost
 
-    #     print(query_prompt)
+        # query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
+        # print(query_prompt)
+        # for line in fileinput.input():
+        #     query = line.rstrip()
+        #     if query == "Exit":
+        #         break
+        #     search(client=opensearch, user_query=query, index=index_name, synonyms=args.synonyms)
 
-    # Load Query Classifier model using fasttext
-    query_classifier_model = fasttext.load_model(model_file)
+        #     print(query_prompt)
 
-    search(client=opensearch, user_query=query, index=index_name, synonyms=synonyms, model=query_classifier_model,
-           query_category_filter=query_category_filter, query_category_boost=query_category_boost)
+        # Load Query Classifier model using fasttext
+        query_classifier_model = fasttext.load_model(model_file)
+
+        search(client=opensearch, user_query=query, index=index_name, synonyms=synonyms, model=query_classifier_model,
+            query_category_filter=query_category_filter, query_category_boost=query_category_boost)
 
     
